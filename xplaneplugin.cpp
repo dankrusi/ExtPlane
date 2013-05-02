@@ -23,6 +23,142 @@ float XPlanePlugin::flightLoop(float inElapsedSinceLastCall, float inElapsedTime
     return flightLoopInterval;
 }
 
+
+
+
+
+
+#include "XPLMNavigation.h"
+#include "XPLMGraphics.h"
+#include <QList>
+#include <QTime>
+#include <qmath.h>
+
+
+
+bool processed = false;
+
+int GetNavDataCallback(void *inRefcon, void *outValue, int inOffset, int inMaxLength) {
+
+    QString data;
+
+    // Test nav pos local coord
+    if(false) {
+        XPLMNavRef nav = XPLMFindNavAid(NULL,"KSEA",NULL,NULL,NULL,xplm_Nav_Airport);
+        if(nav != XPLM_NAV_NOT_FOUND) {
+            float lon,lat;
+            XPLMGetNavAidInfo(nav,NULL,&lat,&lon,NULL,NULL,NULL,NULL,NULL,NULL);
+            double localX,localY,localZ;
+            XPLMWorldToLocal(lat,lon,0,&localX,&localY,&localZ);
+            qDebug() << "first nav" << localX << localY;
+        }
+        double planeX = XPLMGetDatad(XPLMFindDataRef("sim/flightmodel/position/local_x"));
+        double planeY = XPLMGetDatad(XPLMFindDataRef("sim/flightmodel/position/local_y"));
+        qDebug() << "plane" << planeX << planeY;
+    }
+
+    if(!processed) {
+
+
+        qDebug() << "\n\nGetNavDataCallback\n\n";
+        //processed = true;
+
+
+
+        // Init
+        int count = 0;
+        XPLMNavRef nav;
+        QTime timer;
+
+        // Get all
+        if(false) {
+            count = 0;
+            timer.restart();
+            nav = XPLMGetFirstNavAid();
+            while(nav != XPLM_NAV_NOT_FOUND) {
+                count++;
+                // Get next
+                nav = XPLMGetNextNavAid(nav);
+                float lon,lat;
+                XPLMGetNavAidInfo(nav,NULL,&lon,&lat,NULL,NULL,NULL,NULL,NULL,NULL);
+            }
+            qDebug() << "total navs: " << count << "ms:" << timer.elapsed();
+        }
+
+        // Get all local
+        if(true) {
+            count = 0;
+            timer.restart();
+
+            double planeX = XPLMGetDatad(XPLMFindDataRef("sim/flightmodel/position/local_x"));
+            double planeY = XPLMGetDatad(XPLMFindDataRef("sim/flightmodel/position/local_y"));
+
+            nav = XPLMGetFirstNavAid();
+            while(nav != XPLM_NAV_NOT_FOUND) {
+                // Get next
+                nav = XPLMGetNextNavAid(nav);
+                float lon,lat;
+                char id[32];
+                XPLMGetNavAidInfo(nav,NULL,&lat,&lon,NULL,NULL,NULL,id,NULL,NULL);
+                double localX,localY,localZ;
+                XPLMWorldToLocal(lat,lon,0,&localX,&localY,&localZ);
+                double dist = qSqrt( (localX - planeX)*(localX - planeX) + (localY - planeY)*(localY - planeY) );
+                if(dist < 200) { // 2km
+                    count++;
+                    qDebug() << "nav #"<< count << "id" << id;
+                    data = QString("nav#%1id%2").arg(count).arg(id);
+                }
+            }
+            qDebug() << "total navs: " << count << "ms:" << timer.elapsed();
+        }
+
+
+        // Get based on grid
+        if(false) {
+            QList<XPLMNavRef> navs;
+            count = 0;
+            timer.restart();
+            for(int xx = 0; xx < 20; xx++) {
+                for(int yy = 0; yy < 20; yy++) {
+                    double dlat, dlon, dalt;
+                    float flat = (float)dlat;
+                    float flon = (float)dlon;
+                    XPLMLocalToWorld(xx,yy,0,&dlat,&dlon,&dalt);
+                    nav = XPLMFindNavAid(NULL,
+                                         NULL,
+                                         &flat,    /* float *              inLat Can be NULL */
+                                         &flon,    /* float *              inLon Can be NULL */
+                                         NULL,
+                                         xplm_Nav_Airport);
+                    if(nav != XPLM_NAV_NOT_FOUND) {
+                        if(!navs.contains(nav)) {
+                            navs.append(nav);
+                            count++;
+                        }
+                    }
+                }
+            }
+            qDebug() << "local navs: " << count << "ms:" << timer.elapsed();
+        }
+
+        qDebug() << "\n\n";
+    }
+
+    if(outValue != NULL) {
+        for(int i = 0; i < data.length(); i++) {
+            ((char*)outValue)[i] = (char)data.at(i).toAscii();
+        }
+    }
+
+    return 1000;
+}
+
+
+
+
+
+
+
 int XPlanePlugin::pluginStart(char * outName, char * outSig, char *outDesc) {
     qDebug() << Q_FUNC_INFO << "ExtPlane plugin started";
     app = new QCoreApplication(argc, &argv);
@@ -31,6 +167,19 @@ int XPlanePlugin::pluginStart(char * outName, char * outSig, char *outDesc) {
     strcpy(outName, "ExtPlane");
     strcpy(outSig, "org.vranki.extplaneplugin");
     strcpy(outDesc, "Read and write X-Plane datarefs from external programs using TCP socket.");
+
+    //  Create our custom integer dataref
+    XPLMDataRef gCounterDataRef = XPLMRegisterDataAccessor("extplane/navdata/test",
+                                                 xplmType_Data,                                 // The types we support
+                                                 0,                                             // Writable
+                                                 NULL, NULL,                                    // Integer accessors
+                                                 NULL, NULL,                                    // Float accessors
+                                                 NULL, NULL,                                    // Doubles accessors
+                                                 NULL, NULL,                                    // Int array accessors
+                                                 NULL, NULL,                                    // Float array accessors
+                                                 GetNavDataCallback, NULL,                     // Raw data accessors
+                                                 NULL, NULL);                                   // Refcons not used
+
     app->processEvents();
     return 1;
 }
